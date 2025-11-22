@@ -1,64 +1,111 @@
 import requests
-import pandas as pd
-import plotly.express as px
-from datetime import datetime, timedelta
 import calendar
+from datetime import datetime, timedelta
+import plotly.graph_objects as go
 
-def buscar_cotacao_mes(mmyyyy: str):
 
-    # ---- 1. Extrair mês e ano ----
-    mes = int(mmyyyy[:2])
-    ano = int(mmyyyy[2:])
-
-    # ---- 2. Gerar datas inicial e final ----
-    dia_final = calendar.monthrange(ano, mes)[1]
-    data_inicial = datetime(ano, mes, 1)
-    data_final = datetime(ano, mes, dia_final)
-
-    # ---- 3. Montar URL da API PTAX ----
-    url = (
-        "https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/"
-        f"CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)"
-        f"?@dataInicial='{data_inicial.strftime('%m-%d-%Y')}'"
-        f"&@dataFinalCotacao='{data_final.strftime('%m-%d-%Y')}'"
-        "&$format=json"
+def f(periodo):
+    """
+    Busca cotação do dólar para um período (MMYYYY) e gera gráfico.
+    
+    Args:
+        periodo: String no formato "MMYYYY" (ex: "072011")
+        
+    Returns:
+        Figura do Plotly com gráfico de linha da cotação
+    """
+    first_date = datetime.strptime(periodo, "%m%Y")
+    last_date = first_date.replace(
+        day=calendar.monthrange(first_date.year, first_date.month)[1]
     )
-
-    # ---- 4. Consultar API ----
-    resposta = requests.get(url).json()
-    valores = resposta["value"]
-
-    # ---- 5. Construir DataFrame ----
-    df = pd.DataFrame(valores)
-    df["dataHoraCotacao"] = pd.to_datetime(df["dataHoraCotacao"]).dt.date
-    df = df[["dataHoraCotacao", "cotacaoVenda"]]
-
-    # ---- 6. Criar todas as datas do mês ----
-    todas_datas = pd.date_range(start=data_inicial, end=data_final, freq="D")
-    df_completo = pd.DataFrame({"data": todas_datas})
-
-    # ---- 7. Unir cotações e preencher dias sem valor com o anterior ----
-    df_merged = df_completo.merge(
-        df,
-        left_on="data",
-        right_on="dataHoraCotacao",
-        how="left"
-    ).drop(columns=["dataHoraCotacao"])
-
-    df_merged["cotacaoVenda"] = df_merged["cotacaoVenda"].ffill()
-
-    # ---- 8. Gráfico Plotly ----
-    fig = px.line(
-        df_merged,
-        x="data",
-        y="cotacaoVenda",
-        title=f"Cotação do Dólar – {mes:02d}/{ano}",
-        labels={"data": "Data", "cotacaoVenda": "Cotação (R$)"}
+    
+    data_inicial = first_date.strftime("%m-%d-%Y")
+    data_final = last_date.strftime("%m-%d-%Y")
+    
+    url = f"https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)?@dataInicial='{data_inicial}'&@dataFinalCotacao='{data_final}'&$format=json"
+    
+    print(f"Buscando cotações de {first_date.strftime('%d/%m/%Y')} a {last_date.strftime('%d/%m/%Y')}...")
+    
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Erro ao buscar dados: {e}")
+        return None
+    
+    cotacoes = data.get('value', [])
+    
+    if not cotacoes:
+        print("Nenhuma cotação encontrada para este período.")
+        return None
+    
+    cotacoes_dict = {}
+    for cotacao in cotacoes:
+        data_cotacao = datetime.strptime(cotacao['dataHoraCotacao'], "%Y-%m-%d %H:%M:%S.%f")
+        cotacoes_dict[data_cotacao.date()] = {
+            'compra': cotacao['cotacaoCompra'],
+            'venda': cotacao['cotacaoVenda']
+        }
+    
+    datas = []
+    valores_compra = []
+    valores_venda = []
+    
+    current_date = first_date
+    ultima_cotacao = None
+    
+    while current_date <= last_date:
+        date_key = current_date.date()
+        
+        if date_key in cotacoes_dict:
+            ultima_cotacao = cotacoes_dict[date_key]
+        
+        if ultima_cotacao:
+            datas.append(current_date)
+            valores_compra.append(ultima_cotacao['compra'])
+            valores_venda.append(ultima_cotacao['venda'])
+        
+        current_date += timedelta(days=1)
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=datas,
+        y=valores_compra,
+        mode='lines+markers',
+        name='Cotação Compra',
+        line=dict(color='blue', width=2),
+        marker=dict(size=4)
+    ))
+    
+    fig.add_trace(go.Scatter(
+        x=datas,
+        y=valores_venda,
+        mode='lines+markers',
+        name='Cotação Venda',
+        line=dict(color='red', width=2),
+        marker=dict(size=4)
+    ))
+    
+    mes_nome = first_date.strftime("%B").capitalize()
+    ano = first_date.year
+    
+    fig.update_layout(
+        title=f'Cotação do Dólar - {mes_nome} de {ano}',
+        xaxis_title='Data',
+        yaxis_title='Cotação (R$)',
+        hovermode='x unified',
+        template='plotly_white',
+        xaxis=dict(tickformat='%d/%m'),
+        height=600
     )
+    
+    print(f"Gráfico gerado com sucesso! Total de dias: {len(datas)}")
+    
+    return fig
 
-    fig.show()
 
-
-# ---------------------------
-# Exemplo de uso:
-buscar_cotacao_mes("072011")
+periodo = "072011"
+fig = f(periodo)
+fig.show()
