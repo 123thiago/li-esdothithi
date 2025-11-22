@@ -10,7 +10,7 @@ res = s.post(
 )
 
 res = s.get(
-    "http://api.olhovivo.sptrans.com.br/v2.1/Parada/BuscarParadasPorLinha?codigoLinha=2507"
+    "http://api.olhovivo.sptrans.com.br/v2.1/Parada/BuscarParadasPorLinha?codigoLinha=2508"
 )
 paradas = res.json()
 
