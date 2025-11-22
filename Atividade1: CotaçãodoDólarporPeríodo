@@ -1,0 +1,64 @@
+import requests
+import pandas as pd
+import plotly.express as px
+from datetime import datetime, timedelta
+import calendar
+
+def buscar_cotacao_mes(mmyyyy: str):
+
+    # ---- 1. Extrair mês e ano ----
+    mes = int(mmyyyy[:2])
+    ano = int(mmyyyy[2:])
+
+    # ---- 2. Gerar datas inicial e final ----
+    dia_final = calendar.monthrange(ano, mes)[1]
+    data_inicial = datetime(ano, mes, 1)
+    data_final = datetime(ano, mes, dia_final)
+
+    # ---- 3. Montar URL da API PTAX ----
+    url = (
+        "https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/"
+        f"CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)"
+        f"?@dataInicial='{data_inicial.strftime('%m-%d-%Y')}'"
+        f"&@dataFinalCotacao='{data_final.strftime('%m-%d-%Y')}'"
+        "&$format=json"
+    )
+
+    # ---- 4. Consultar API ----
+    resposta = requests.get(url).json()
+    valores = resposta["value"]
+
+    # ---- 5. Construir DataFrame ----
+    df = pd.DataFrame(valores)
+    df["dataHoraCotacao"] = pd.to_datetime(df["dataHoraCotacao"]).dt.date
+    df = df[["dataHoraCotacao", "cotacaoVenda"]]
+
+    # ---- 6. Criar todas as datas do mês ----
+    todas_datas = pd.date_range(start=data_inicial, end=data_final, freq="D")
+    df_completo = pd.DataFrame({"data": todas_datas})
+
+    # ---- 7. Unir cotações e preencher dias sem valor com o anterior ----
+    df_merged = df_completo.merge(
+        df,
+        left_on="data",
+        right_on="dataHoraCotacao",
+        how="left"
+    ).drop(columns=["dataHoraCotacao"])
+
+    df_merged["cotacaoVenda"] = df_merged["cotacaoVenda"].ffill()
+
+    # ---- 8. Gráfico Plotly ----
+    fig = px.line(
+        df_merged,
+        x="data",
+        y="cotacaoVenda",
+        title=f"Cotação do Dólar – {mes:02d}/{ano}",
+        labels={"data": "Data", "cotacaoVenda": "Cotação (R$)"}
+    )
+
+    fig.show()
+
+
+# ---------------------------
+# Exemplo de uso:
+buscar_cotacao_mes("072011")
